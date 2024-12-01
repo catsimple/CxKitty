@@ -135,7 +135,7 @@ class TaskPointBase:
             self.logger.debug(f"Attachment: {self.attachment}")
         else:
             if t := html.select_one("p.blankTips"):
-                if t.text == "章节未开放！":
+                if "章节未开放" in t.text::
                     self.logger.error("章节未开放")
                     raise ChapterNotOpened
                 else:
