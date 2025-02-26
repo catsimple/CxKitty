@@ -1,46 +1,83 @@
-name: Build Docker image to Github
+name: Build and Push Docker Image to GitHub Container Registry
+
 on:
-  workflow_dispatch: #github页面手动触发
+  workflow_dispatch: # 手动触发
   push:
     tags:
       - "v*.*"
+
 env:
-  IMAGE_NAME: cxkitty #这是您的镜像名
+  IMAGE_NAME: cxkitty  # 你的镜像名
+  REGISTRY: ghcr.io
+
 jobs:
-  get-tags:
+  build-push:
     runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
-    outputs:
-      tags: ${{ steps.output-id.outputs.v }}
+
     steps:
       - uses: actions/checkout@v3
-      - id: output-id
+        with:
+          fetch-depth: 0 # 获取完整的历史记录，以便检测文件更改
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Configure Poetry
         run: |
-          VERSION=edge
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          fi
-          echo "v=${VERSION}" >> $GITHUB_OUTPUT          
-  push-ghcr:
-    runs-on: ubuntu-latest
-    env:
-      TZ: Asia/Shanghai
-      REGISTRY: ghcr.io
-    steps:
-      - uses: actions/checkout@v3
-      - name: Login
+          poetry config virtualenvs.in-project true # 可选：如果使用项目本地虚拟环境
+          poetry config installer.no-interaction true
+
+      - name: Check for pyproject.toml changes
+        id: check_changes
+        run: |
+          git diff --quiet HEAD~1 HEAD pyproject.toml || echo "::set-output name=changed::true"
+
+      - name: Update poetry.lock if pyproject.toml changed
+        if: steps.check_changes.outputs.changed == 'true'
+        run: poetry lock
+
+      - name: Commit poetry.lock if it was updated
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "GitHub Actions"
+          git add poetry.lock
+          git commit -m "Update poetry.lock" || echo "No changes to commit"
+          git push
+
+      - name: Install Dependencies
+        run: poetry install --no-root
+
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v1
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }} #此值是github专为Action提供的,这就是上一步没有手动添加的原因
-      - name: Build && Push
+          password: ${{ secrets.GITHUB_TOKEN }} # GitHub 提供的 Action 专用 Token
+
+      - name: Determine version tag
+        id: version
+        run: |
+          VERSION=latest # 默认标签
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}  # 去掉 "refs/tags/v" 前缀
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Tag version: $VERSION"
+
+      - name: Build and Push Docker Image
         uses: docker/build-push-action@v2
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ 1.0 }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest       
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.VERSION }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
