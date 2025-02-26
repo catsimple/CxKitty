@@ -179,8 +179,7 @@ def fuck_task_worker(chap: ChapterContainer):
                                 border_style="red",
                             )
                         )
-                        logger.error("\n-----*未开放章节, 程序异常退出*-----")
-                        sys.exit()
+                        return False  # 返回主循环, 不退出程序
                 refresh_flag = True
                 try:
                     # 开始分类讨论任务点类型
@@ -263,6 +262,7 @@ def fuck_task_worker(chap: ChapterContainer):
             )
         )
         time.sleep(5.0)
+        return True # 返回主循环。任务完成，继续执行或退出
 
 
 def fuck_exam_worker(exam: ExamDto, export=False):
@@ -290,7 +290,7 @@ def fuck_exam_worker(exam: ExamDto, export=False):
                 f"[yellow]应尽快使用 本程序 / Web端 / 客户端 作答[/]\n"
                 f"[green]试卷导出路径为：{export_path}"
             )
-            return
+            return True # 考试已导出, 返回主程序
 
         # 实例化解决器
         resolver = QuestionResolver(
@@ -325,73 +325,85 @@ def fuck_exam_worker(exam: ExamDto, export=False):
 
         # 开始执行自动接管
         resolver.execute()
+    return True
 
 
 if __name__ == "__main__":
-    dialog.logo(console)
-    acc_sessions = sessions_load()
-    # 存在至少一个会话存档
-    if acc_sessions:
-        # 多用户, 允许进行选择
-        if config.MULTI_SESS:
-            dialog.select_session(console, acc_sessions, api)
-        # 单用户, 默认加载第一个会话档
+    while True:  # 主循环
+        dialog.logo(console)
+        acc_sessions = sessions_load()
+        # 存在至少一个会话存档
+        if acc_sessions:
+            # 多用户, 允许进行选择
+            if config.MULTI_SESS:
+                dialog.select_session(console, acc_sessions, api)
+            # 单用户, 默认加载第一个会话档
+            else:
+                ck = ck2dict(acc_sessions[0].ck)
+                api.session.ck_load(ck)
+                if not api.accinfo():
+                    console.print("[red]会话失效, 尝试重新登录")
+                    if not dialog.relogin(console, acc_sessions[0], api):
+                        console.print("[red]重登失败，账号或密码错误")
+                        continue # 返回主循环，重新登录
+        # 会话存档为空
         else:
-            ck = ck2dict(acc_sessions[0].ck)
-            api.session.ck_load(ck)
-            if not api.accinfo():
-                console.print("[red]会话失效, 尝试重新登录")
-                if not dialog.relogin(console, acc_sessions[0], api):
-                    console.print("[red]重登失败，账号或密码错误")
-                    sys.exit()
-    # 会话存档为空
-    else:
-        console.print("[yellow]会话存档为空, 请登录账号")
-        dialog.login(console, api)
-    logger.info("\n-----*任务开始执行*-----")
-    logger.info(f"Ver. {__version__}")
-    dialog.accinfo(console, api)
-    try:
-        # 拉取预先上传的人脸图片
-        if config.FETCH_UPLOADED_FACE is True:
-            if face_url := api.fetch_face():
-                api.save_face(face_url, config.FACE_PATH)
-        # 拉取该账号下所学的课程
-        classes = api.fetch_classes()
-        # 课程选择交互
-        command = dialog.select_class(console, classes)
-        # 注册验证码 人脸 回调
-        api.session.reg_captcha_after(on_captcha_after)
-        api.session.reg_captcha_before(on_captcha_before)
-        api.session.reg_face_after(on_face_detection_after)
-        api.session.reg_face_before(on_face_detection_before)
-        # 执行课程任务
-        for task_obj in ClassSelector(command, classes):
-            # 章节容器 执行章节任务
-            if isinstance(task_obj, ChapterContainer):
-                fuck_task_worker(task_obj)
+            console.print("[yellow]会话存档为空, 请登录账号")
+            dialog.login(console, api)
 
-            # 考试对象 执行考试任务
-            elif isinstance(task_obj, ExamDto):
-                fuck_exam_worker(task_obj)
+        logger.info("\n-----*任务开始执行*-----")
+        logger.info(f"Ver. {__version__}")
+        dialog.accinfo(console, api)
+        try:
+            # 拉取预先上传的人脸图片
+            if config.FETCH_UPLOADED_FACE is True:
+                if face_url := api.fetch_face():
+                    api.save_face(face_url, config.FACE_PATH)
+            # 拉取该账号下所学的课程
+            classes = api.fetch_classes()
+            # 课程选择交互
+            command = dialog.select_class(console, classes)
+            # 注册验证码 人脸 回调
+            api.session.reg_captcha_after(on_captcha_after)
+            api.session.reg_captcha_before(on_captcha_before)
+            api.session.reg_face_after(on_face_detection_after)
+            api.session.reg_face_before(on_face_detection_before)
+            # 执行课程任务
+            class_selector = ClassSelector(command, classes)
+            for task_obj in class_selector:
+                # 章节容器 执行章节任务
+                if isinstance(task_obj, ChapterContainer):
+                    if not fuck_task_worker(task_obj): # 如果遇到未开放章节, 返回主菜单
+                       break
 
-            # 考试列表 进入二级选择交互
-            elif isinstance(task_obj, list):
-                exam, export = dialog.select_exam(console, task_obj, api)
-                fuck_exam_worker(exam, export)
+                # 考试对象 执行考试任务
+                elif isinstance(task_obj, ExamDto):
+                    fuck_exam_worker(task_obj)
 
-    except Exception as err:
-        # 任务异常
-        console.print_exception(show_locals=False)
-        logger.error("\n-----*程序运行异常退出*-----", exc_info=True)
-        if isinstance(err, json.JSONDecodeError):
-            console.print("[red]JSON 解析失败, 可能为账号 ck 失效, 请重新登录该账号 (序号+r)")
+                # 考试列表 进入二级选择交互
+                elif isinstance(task_obj, list):
+                    exam, export = dialog.select_exam(console, task_obj, api)
+                    fuck_exam_worker(exam, export)
+
+
+        except Exception as err:
+            # 任务异常
+            console.print_exception(show_locals=False)
+            logger.error("\n-----*程序运行异常退出*-----", exc_info=True)
+            if isinstance(err, json.JSONDecodeError):
+                console.print("[red]JSON 解析失败, 可能为账号 ck 失效, 请重新登录该账号 (序号+r)")
+            else:
+                console.print("[bold red]程序运行出现错误, 请截图保存并附上 log 文件在 issue 提交")
+            break  # 返回主循环
+        except KeyboardInterrupt:
+            # 手动中断程序运行
+            console.print("[yellow]手动中断程序运行")
+            break  # 返回主循环
         else:
-            console.print("[bold red]程序运行出现错误, 请截图保存并附上 log 文件在 issue 提交")
-    except KeyboardInterrupt:
-        # 手动中断程序运行
-        console.print("[yellow]手动中断程序运行")
-    else:
-        # 任务执行完毕
-        logger.info("\n-----*任务执行完毕, 程序退出*-----")
-        console.print("[green]任务已完成, 程序退出")
+            # 任务执行完毕
+            logger.info("\n-----*所有任务执行完毕, 返回主菜单*-----")
+            console.print("[green]所有任务已完成, 返回主菜单")
+            break  # 返回主循环
+
+    logger.info("\n-----*程序退出*-----")
+    console.print("[green]程序退出")
