@@ -1,14 +1,11 @@
 name: Build Docker image to Github
-
 on:
-  workflow_dispatch: # github 页面手动触发
+  workflow_dispatch: #github页面手动触发
   push:
     tags:
       - "v*.*"
-
 env:
-  IMAGE_NAME: cxkitty # 这是您的镜像名
-
+  IMAGE_NAME: cxkitty #这是您的镜像名
 jobs:
   get-tags:
     runs-on: ubuntu-latest
@@ -24,52 +21,20 @@ jobs:
           if [[ $GITHUB_REF == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/v}
           fi
-          echo "v=${VERSION}" >> $GITHUB_OUTPUT
-
+          echo "v=${VERSION}" >> $GITHUB_OUTPUT          
   push-ghcr:
     runs-on: ubuntu-latest
-    needs: get-tags
     env:
       TZ: Asia/Shanghai
       REGISTRY: ghcr.io
     steps:
       - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Install Poetry
-        run: pip install poetry
-
-      - name: Check for pyproject.toml changes
-        id: check_changes
-        run: |
-          git diff --quiet HEAD~1 HEAD pyproject.toml || echo "::set-output name=changed::true"
-
-      - name: Update poetry.lock if pyproject.toml changed
-        if: steps.check_changes.outputs.changed == 'true'
-        run: poetry lock
-
-      - name: Commit poetry.lock if it was updated
-        if: steps.check_changes.outputs.changed == 'true'
-        run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "GitHub Actions"
-          git add poetry.lock
-          git commit -m "Update poetry.lock" || echo "No changes to commit"
-          git push
-
       - name: Login
         uses: docker/login-action@v1
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }} # 此值是github专为Action提供的,这就是上一步没有手动添加的原因
-
+          password: ${{ secrets.GITHUB_TOKEN }} #此值是github专为Action提供的,这就是上一步没有手动添加的原因
       - name: Build && Push
         uses: docker/build-push-action@v2
         with:
@@ -78,4 +43,4 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ 1.0 }}
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest       
