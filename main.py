@@ -403,7 +403,7 @@ if __name__ == "__main__":
             # 任务执行完毕
             logger.info("\n-----*所有任务执行完毕, 返回主菜单*-----")
             console.print("[green]所有任务已完成, 返回主菜单")
-            break  # 返回主循环
+            pass  # 返回主循环
 
     logger.info("\n-----*程序退出*-----")
     console.print("[green]程序退出")
